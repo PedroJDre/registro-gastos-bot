@@ -4,27 +4,25 @@ from fastapi import FastAPI, Request
 from twilio.twiml.messaging_response import MessagingResponse
 import openai
 import gspread
-from oauth2client.client import SignedJwtAssertionCredentials
+from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# Inicializar FastAPI
 app = FastAPI()
 
-# Configurar claves
+# Claves y configuración
 openai.api_key = os.getenv("OPENAI_API_KEY")
 twilio_whatsapp_number = os.getenv("TWILIO_WHATSAPP_NUMBER")
 google_sheet_name = os.getenv("GOOGLE_SHEET_NAME")
 
-# Configurar credenciales de Google con SignedJwtAssertionCredentials
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+# Autenticación con Google Sheets moderna
+scope = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
 
-with open("service_account.json") as f:
-    keyfile_dict = json.load(f)
-
-creds = SignedJwtAssertionCredentials(
-    keyfile_dict["client_email"],
-    keyfile_dict["private_key"],
-    scope
+creds = Credentials.from_service_account_file(
+    "service_account.json",
+    scopes=scope
 )
 
 client = gspread.authorize(creds)
@@ -36,7 +34,7 @@ async def webhook(req: Request):
     incoming_msg = form["Body"]
     sender = form["From"]
 
-    # Obtener categoría y monto desde OpenAI
+    # Clasificación con OpenAI
     prompt = f"Extraé categoría y monto del siguiente mensaje de gasto: '{incoming_msg}'. Devolvélo como 'Categoría: <categoria>, Monto: <monto>'"
     response = openai.Completion.create(
         engine="text-davinci-003",
@@ -53,7 +51,7 @@ async def webhook(req: Request):
         categoria = "No identificado"
         monto = "0"
 
-    # Registrar en Google Sheets
+    # Agregar a Google Sheet
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     sheet.append_row([now, sender, incoming_msg, categoria, monto])
 
