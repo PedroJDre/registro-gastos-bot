@@ -1,44 +1,63 @@
+import os
+import json
 from fastapi import FastAPI, Request
+from twilio.twiml.messaging_response import MessagingResponse
 import openai
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-import os
+from oauth2client.client import SignedJwtAssertionCredentials
 from datetime import datetime
-from fastapi.responses import PlainTextResponse
 
+# Inicializar FastAPI
 app = FastAPI()
 
-# Autenticación con Google Sheets
+# Configurar claves
+openai.api_key = os.getenv("OPENAI_API_KEY")
+twilio_whatsapp_number = os.getenv("TWILIO_WHATSAPP_NUMBER")
+google_sheet_name = os.getenv("GOOGLE_SHEET_NAME")
+
+# Configurar credenciales de Google con SignedJwtAssertionCredentials
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("service_account.json", scope)
+
+with open("service_account.json") as f:
+    keyfile_dict = json.load(f)
+
+creds = SignedJwtAssertionCredentials(
+    keyfile_dict["client_email"],
+    keyfile_dict["private_key"],
+    scope
+)
+
 client = gspread.authorize(creds)
-sheet = client.open(os.environ["GOOGLE_SHEET_NAME"]).sheet1
-
-# OpenAI
-openai.api_key = os.environ["OPENAI_API_KEY"]
-
-def procesar_mensaje(texto):
-    prompt = f"Extraé monto, categoría y fecha (hoy por defecto) del siguiente texto de gasto: '{texto}'. Respondé en formato JSON con keys: monto, categoria, fecha (YYYY-MM-DD)"
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    content = response.choices[0].message.content
-    return eval(content)
+sheet = client.open(google_sheet_name).sheet1
 
 @app.post("/webhook")
-async def webhook(request: Request):
-    form = await request.form()
-    mensaje = form.get("Body")
-    if not mensaje:
-        return PlainTextResponse("No message received", status_code=400)
+async def webhook(req: Request):
+    form = await req.form()
+    incoming_msg = form["Body"]
+    sender = form["From"]
 
+    # Obtener categoría y monto desde OpenAI
+    prompt = f"Extraé categoría y monto del siguiente mensaje de gasto: '{incoming_msg}'. Devolvélo como 'Categoría: <categoria>, Monto: <monto>'"
+    response = openai.Completion.create(
+        engine="text-davinci-003",
+        prompt=prompt,
+        max_tokens=50
+    )
+    result = response.choices[0].text.strip()
+
+    # Parsear resultado
     try:
-        data = procesar_mensaje(mensaje)
-        fecha = data.get("fecha", datetime.today().strftime("%Y-%m-%d"))
-        monto = data.get("monto", "")
-        categoria = data.get("categoria", "")
-        sheet.append_row([fecha, monto, categoria, mensaje])
-        return PlainTextResponse("Gasto registrado con éxito.")
-    except Exception as e:
-        return PlainTextResponse(f"Error: {str(e)}", status_code=500)
+        categoria = result.split("Categoría:")[1].split(",")[0].strip()
+        monto = result.split("Monto:")[1].strip()
+    except:
+        categoria = "No identificado"
+        monto = "0"
+
+    # Registrar en Google Sheets
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sheet.append_row([now, sender, incoming_msg, categoria, monto])
+
+    # Responder por WhatsApp
+    r = MessagingResponse()
+    r.message(f"Gasto registrado ✅\nCategoría: {categoria}\nMonto: {monto}")
+    return str(r)
