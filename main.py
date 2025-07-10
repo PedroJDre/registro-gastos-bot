@@ -14,16 +14,14 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 twilio_whatsapp_number = os.getenv("TWILIO_WHATSAPP_NUMBER")
 google_sheet_name = os.getenv("GOOGLE_SHEET_NAME")
 
-# Autenticación con Google Sheets moderna
+# Autenticación con Google Sheets moderna desde variable de entorno
 scope = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
 
-creds = Credentials.from_service_account_file(
-    "service_account.json",
-    scopes=scope
-)
+creds_info = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
+creds = Credentials.from_service_account_info(creds_info, scopes=scope)
 
 client = gspread.authorize(creds)
 sheet = client.open(google_sheet_name).sheet1
